@@ -2,19 +2,9 @@
 """
 fetch_leave_emails.py
 ----------------------
-Runs on a schedule (GitHub Actions cron, same pattern as your attendance
-sync). Logs into the HR Gmail inbox via IMAP, finds unread emails sent
-from a *known employee address*, and forwards them to
-leave_email_intake.php so HR can review/approve them in the panel.
-
-Required environment variables (set as GitHub Secrets):
-  GMAIL_USER            e.g. moba@cloudjunction.cloud
-  GMAIL_APP_PASSWORD    the 16-char Google App Password (same one used in mailer_config.php)
-  INTAKE_URL            e.g. https://yourdomain.com/leave_email_intake.php
-  INTAKE_SECRET         must match $secret_key in leave_email_intake.php
-  EMPLOYEE_EMAILS_URL   endpoint that returns a JSON list of employee emails (see note below)
-
-No third-party packages required — uses only the Python standard library.
+Runs on a schedule (GitHub Actions cron). Logs into the HR Gmail inbox via IMAP, 
+finds ALL emails (read or unread) received TODAY sent from a known employee address, 
+and forwards them to leave_email_intake.php.
 """
 
 import imaplib
@@ -24,6 +14,7 @@ import json
 import os
 import sys
 import urllib.request
+import datetime
 
 GMAIL_USER         = os.environ["GMAIL_USER"]
 GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
@@ -31,12 +22,11 @@ INTAKE_URL         = os.environ["INTAKE_URL"]
 INTAKE_SECRET      = os.environ["INTAKE_SECRET"]
 
 # Words that must appear somewhere in the subject or body for an email
-# to be treated as a leave request. Adjust freely (Urdu/Roman-Urdu too).
+# to be treated as a leave request.
 LEAVE_KEYWORDS = [
     "leave", "chutti", "chhutti", "off day", "sick", "casual",
     "annual leave", "vacation", "rukhsat", "bimar"
 ]
-
 
 def decode_str(raw):
     if raw is None:
@@ -49,7 +39,6 @@ def decode_str(raw):
         else:
             out += text
     return out
-
 
 def get_plain_body(msg):
     if msg.is_multipart():
@@ -64,11 +53,9 @@ def get_plain_body(msg):
         charset = msg.get_content_charset() or "utf-8"
         return msg.get_payload(decode=True).decode(charset, errors="ignore")
 
-
 def looks_like_leave_request(subject, body):
     text = (subject + " " + body).lower()
     return any(kw in text for kw in LEAVE_KEYWORDS)
-
 
 def push_to_intake(from_email, subject, body, message_id, received_at):
     payload = json.dumps({
@@ -93,18 +80,22 @@ def push_to_intake(from_email, subject, body, message_id, received_at):
         print(f"  -> FAILED to push to intake: {e}", file=sys.stderr)
         return False
 
-
 def main():
     imap = imaplib.IMAP4_SSL("imap.gmail.com")
     imap.login(GMAIL_USER, GMAIL_APP_PASSWORD)
     imap.select("INBOX")
 
-    status, data = imap.search(None, "UNSEEN")
+    # Aaj ki date ko IMAP format mein get karein (e.g., 12-Aug-2026)
+    today_date = datetime.date.today().strftime("%d-%b-%Y")
+    
+    # Aaj ki saari emails search karein (Read ho ya Unread)
+    status, data = imap.search(None, f'(SINCE "{today_date}")')
+    
     if status != "OK":
         print("IMAP search failed"); sys.exit(1)
 
     ids = data[0].split()
-    print(f"Found {len(ids)} unseen email(s)")
+    print(f"Found {len(ids)} email(s) for today ({today_date})")
 
     for eid in ids:
         status, msg_data = imap.fetch(eid, "(RFC822)")
@@ -114,7 +105,7 @@ def main():
         msg = email.message_from_bytes(msg_data[0][1])
         subject = decode_str(msg.get("Subject"))
         from_header = decode_str(msg.get("From"))
-        # Extract just the email address out of "Name <email@x.com>"
+        
         from_email = email.utils.parseaddr(from_header)[1].lower()
         message_id = msg.get("Message-ID", f"noid-{eid.decode()}")
         received_at = msg.get("Date", "")
@@ -126,14 +117,11 @@ def main():
             print("  -> skipped (no leave keyword match)")
             continue
 
-        ok = push_to_intake(from_email, subject, body, message_id, received_at)
-        if ok:
-            # Mark as read so we don't reprocess it next run
-            imap.store(eid, '+FLAGS', '\\Seen')
+        push_to_intake(from_email, subject, body, message_id, received_at)
+        # Hata diya gaya: ab hum email ko mark as read (\Seen) nahi kar rahe kyunki uski zaroorat nahi
 
     imap.close()
     imap.logout()
-
 
 if __name__ == "__main__":
     main()
