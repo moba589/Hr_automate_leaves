@@ -117,8 +117,32 @@ def main():
             print("  -> skipped (no leave keyword match)")
             continue
 
-        push_to_intake(from_email, subject, body, message_id, received_at)
-        # Hata diya gaya: ab hum email ko mark as read (\Seen) nahi kar rahe kyunki uski zaroorat nahi
+        def push_to_intake(from_email, subject, body, message_id, received_at):
+    payload = json.dumps({
+        "key": INTAKE_SECRET,
+        "from_email": from_email,
+        "subject": subject[:250],
+        "body": body[:4000],
+        "message_id": message_id,
+        "received_at": received_at,
+    }).encode("utf-8")
+
+    # Yahan User-Agent add kiya gaya hai taake hosting server isay block na kare
+    req = urllib.request.Request(
+        INTAKE_URL, data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            print(f"  -> intake response: {resp.read().decode()}")
+            return True
+    except Exception as e:
+        print(f"  -> FAILED to push to intake: {e}", file=sys.stderr)
+        return False
 
     imap.close()
     imap.logout()
