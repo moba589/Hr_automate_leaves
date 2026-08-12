@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""
-fetch_leave_emails.py
-----------------------
-Runs on a schedule (GitHub Actions cron). Logs into the HR Gmail inbox via IMAP, 
-finds ALL emails (read or unread) received TODAY sent from a known employee address, 
-and forwards them to leave_email_intake.php.
-"""
-
 import imaplib
 import email
 from email.header import decode_header
@@ -21,8 +13,6 @@ GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
 INTAKE_URL         = os.environ["INTAKE_URL"]
 INTAKE_SECRET      = os.environ["INTAKE_SECRET"]
 
-# Words that must appear somewhere in the subject or body for an email
-# to be treated as a leave request.
 LEAVE_KEYWORDS = [
     "leave", "chutti", "chhutti", "off day", "sick", "casual",
     "annual leave", "vacation", "rukhsat", "bimar"
@@ -69,7 +59,10 @@ def push_to_intake(from_email, subject, body, message_id, received_at):
 
     req = urllib.request.Request(
         INTAKE_URL, data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        },
         method="POST",
     )
     try:
@@ -85,10 +78,7 @@ def main():
     imap.login(GMAIL_USER, GMAIL_APP_PASSWORD)
     imap.select("INBOX")
 
-    # Aaj ki date ko IMAP format mein get karein (e.g., 12-Aug-2026)
     today_date = datetime.date.today().strftime("%d-%b-%Y")
-    
-    # Aaj ki saari emails search karein (Read ho ya Unread)
     status, data = imap.search(None, f'(SINCE "{today_date}")')
     
     if status != "OK":
@@ -117,32 +107,7 @@ def main():
             print("  -> skipped (no leave keyword match)")
             continue
 
-        def push_to_intake(from_email, subject, body, message_id, received_at):
-    payload = json.dumps({
-        "key": INTAKE_SECRET,
-        "from_email": from_email,
-        "subject": subject[:250],
-        "body": body[:4000],
-        "message_id": message_id,
-        "received_at": received_at,
-    }).encode("utf-8")
-
-    # Yahan User-Agent add kiya gaya hai taake hosting server isay block na kare
-    req = urllib.request.Request(
-        INTAKE_URL, data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            print(f"  -> intake response: {resp.read().decode()}")
-            return True
-    except Exception as e:
-        print(f"  -> FAILED to push to intake: {e}", file=sys.stderr)
-        return False
+        push_to_intake(from_email, subject, body, message_id, received_at)
 
     imap.close()
     imap.logout()
