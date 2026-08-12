@@ -2,8 +2,8 @@ name: Fetch Leave Emails
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Har 15 minute baad chalega
-  workflow_dispatch: # GitHub par manual 'Run workflow' ka button enable karega
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
   run-poller:
@@ -11,10 +11,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # <-- Updated to v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5  # <-- Updated to v5
         with:
           python-version: '3.10'
 
